@@ -1,8 +1,189 @@
-<html>
-  <head>
-    <title></title>
-  </head>
-  <body>
-    <h1>Building......</h1>
-  </body>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="GB18030">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>贪吃蛇游戏</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            background-color: #f0f0f0;
+            margin: 0;
+            flex-direction: column;
+        }
+        #game-board {
+            display: grid;
+            grid-template-rows: repeat(20, 20px);
+            grid-template-columns: repeat(20, 20px);
+            border: 1px solid #000;
+        }
+        .cell {
+            width: 20px;
+            height: 20px;
+        }
+        .snake { background-color: green; }
+        .snake-head { background-color: black; } /* 蛇头设为黑色 */
+        .food { background-color: red; }
+        #score {
+            margin-bottom: 10px;
+            font-size: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div id="score">得分: 0</div>
+    <div id="game-board"></div>
+
+    <script>
+        const board = document.getElementById('game-board');
+        const scoreDisplay = document.getElementById('score');
+        const rows = 35;
+        const cols = 35;
+        let snake = [{ x: 10, y: 10 }];
+        let food = { x: 5, y: 5 };
+        let direction = { x: 0, y: 0 };
+        let score = 0;
+        let interval = 300; // 初始速度降低，增加灵敏性
+        let originalInterval = interval; // 存储原始速度
+        let gameInterval; // 定义 gameInterval 变量
+        let isPaused = false; // 添加暂停状态变量
+        let cells = []; // 存储所有单元格
+        let isAccelerated = false; // 添加加速状态变量
+        let directionQueue = []; // 添加方向队列
+
+        function createBoard() {
+            board.style.gridTemplateRows = `repeat(${rows}, 20px)`;
+            board.style.gridTemplateColumns = `repeat(${cols}, 20px)`;
+            for (let i = 0; i < rows * cols; i++) {
+                const cell = document.createElement('div');
+                cell.classList.add('cell');
+                board.appendChild(cell);
+                cells.push(cell);
+            }
+        }
+
+        function draw() {
+            cells.forEach(cell => cell.className = 'cell');
+            snake.forEach((segment, index) => {
+                const cell = cells[segment.y * cols + segment.x];
+                if (index === 0) {
+                    cell.classList.add('snake-head'); // 蛇头设为黑色
+                } else {
+                    cell.classList.add('snake');
+                }
+            });
+            cells[food.y * cols + food.x].classList.add('food');
+            scoreDisplay.textContent = `得分: ${score}`;
+        }
+
+        function moveSnake() {
+            if (isPaused) return; // 如果游戏暂停，不移动蛇
+
+            // 从方向队列中获取下一个方向
+            if (directionQueue.length > 0) {
+                direction = directionQueue.shift();
+            }
+
+            const head = { x: snake[0].x + direction.x, y: snake[0].y + direction.y };
+            snake.unshift(head);
+
+            if (head.x === food.x && head.y === food.y) {
+                score++;
+                if (score % 10 === 0) { // 每得10分速度加快
+                    clearInterval(gameInterval);
+                    interval -= 20;
+                    gameInterval = setInterval(moveSnake, interval);
+                }
+                if (score === 30) { // 得分30分时显示游戏成功
+                    alert('游戏成功！');
+                    resetGame();
+                } else {
+                    generateFood();
+                }
+            } else {
+                snake.pop();
+            }
+
+            if (head.x < 0 || head.x >= cols || head.y < 0 || head.y >= rows || snake.slice(1).some(segment => segment.x === head.x && segment.y === head.y)) {
+                endGame();
+            }
+
+            draw();
+        }
+
+        function generateFood() {
+            do {
+                food = { x: Math.floor(Math.random() * cols), y: Math.floor(Math.random() * rows) };
+            } while (snake.some(segment => segment.x === food.x && segment.y === food.y));
+        }
+
+        function resetGame() {
+            snake = [{ x: 10, y: 10 }];
+            direction = { x: 0, y: 0 };
+            score = 0;
+            interval = originalInterval; // 重置速度，增加灵敏性
+            generateFood();
+            draw();
+            clearInterval(gameInterval);
+            gameInterval = setInterval(moveSnake, interval);
+            isPaused = false; // 重置暂停状态
+            isAccelerated = false; // 重置加速状态
+            directionQueue = []; // 清空方向队列
+        }
+
+        function endGame() {
+            const restart = confirm(`游戏结束！得分：${score}\n是否重来？`);
+            if (restart) {
+                resetGame();
+            } else {
+                window.close();
+            }
+        }
+
+        document.addEventListener('keydown', (e) => {
+            const keyMap = { w: { x: 0, y: -1 }, s: { x: 0, y: 1 }, a: { x: -1, y: 0 }, d: { x: 1, y: 0 } };
+            const oppositeDirection = { w: 's', s: 'w', a: 'd', d: 'a' };
+
+            if (keyMap[e.key] && (direction.x === 0 || direction.y === 0) && e.key !== oppositeDirection[Object.keys(keyMap).find(key => keyMap[key].x === direction.x && keyMap[key].y === direction.y)]) {
+                if (isAccelerated) {
+                    directionQueue.push(keyMap[e.key]); // 在加速状态下将方向加入队列
+                } else {
+                    direction = keyMap[e.key]; // 在非加速状态下直接更新方向
+                }
+            }
+
+            if (e.key === ' ') { // 按下空格键暂停游戏
+                isPaused = !isPaused;
+                if (isPaused) {
+                    clearInterval(gameInterval);
+                } else {
+                    gameInterval = setInterval(moveSnake, interval);
+                }
+            } else if (e.key === 'Escape') { // 按下ESC键退出游戏
+                window.close();
+            } else if (e.key === 'Shift') { // 按下Shift键加快蛇的速度
+                clearInterval(gameInterval);
+                interval = originalInterval / 2; // 速度加快一倍
+                gameInterval = setInterval(moveSnake, interval);
+                isAccelerated = true; // 设置加速状态
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'Shift') { // 松开Shift键恢复原来的速度
+                clearInterval(gameInterval);
+                interval = originalInterval; // 恢复原来的速度
+                gameInterval = setInterval(moveSnake, interval);
+                isAccelerated = false; // 重置加速状态
+            }
+        });
+
+        createBoard();
+        resetGame();
+        gameInterval = setInterval(moveSnake, interval); // 初始化 gameInterval
+    </script>
+</body>
 </html>
