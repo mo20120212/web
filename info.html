@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Windows Message Notifier — 工程说明</title>
+  <style>
+    body{font-family:Inter, "Segoe UI", Roboto, "Microsoft YaHei", Arial;line-height:1.6;color:#222;margin:0;padding:24px;background:#f7f9fb}
+    .wrap{max-width:1100px;margin:0 auto;background:#fff;padding:28px;border-radius:12px;box-shadow:0 6px 30px rgba(20,30,60,.08)}
+    h1{margin-top:0;font-weight:700}
+    h2{color:#0b63c6;border-left:4px solid #dff0ff;padding-left:10px}
+    pre{background:#0f1724;color:#d2e8ff;padding:12px;border-radius:6px;overflow:auto}
+    code{background:#eef6ff;padding:2px 6px;border-radius:4px}
+    table{width:100%;border-collapse:collapse;margin:10px 0}
+    th,td{padding:8px;border-bottom:1px solid #eef2f6;text-align:left}
+    .note{background:#fff8e6;border-left:4px solid #ffce54;padding:10px;border-radius:6px}
+    .danger{background:#fff0f0;border-left:4px solid #ff6b6b;padding:10px;border-radius:6px}
+    ul{margin:0 0 12px 20px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Windows Message Notifier — 工程级说明</h1>
+    <p>版本目标平台：<strong>net10.0-windows10.0.22621.0</strong>。此文档面向工程师，覆盖架构、构建、关键模块说明、运行/调试要点与改进建议。</p>
+
+    <h2>1. 项目概览</h2>
+    <p>项目为轻量级 Windows 桌面通知工具，提供：</p>
+    <ul>
+      <li>系统托盘控制与未读通知面板（MainWindow / MessageSummaryWindow）</li>
+      <li>控制中心（SettingWindow）含系统音量与亮度控制</li>
+      <li>SMTC 接入（GlobalSystemMediaTransportControls）用于媒体状态查询与控制</li>
+      <li>系统通知监听（UserNotificationListener）用于捕获 Toast 并展示</li>
+    </ul>
+
+    <h2>2. 构建与运行</h2>
+    <p>先决条件：.NET 10 SDK、Windows 10/11（带必要的 Windows SDK 支持 Windows.Media / Windows.UI 命名空间）。</p>
+    <pre><code>dotnet build -c Release
+# 可选：dotnet publish -c Release -r win-x64 --self-contained=false</code></pre>
+    <p>产物位置（默认）：<code>bin\Release\net10.0-windows10.0.22621.0\</code>，可运行 <code>Notifier.exe</code> 或引用 <code>Notifier.dll</code>（TestRunner 用例）。</p>
+
+    <h2>3. 关键依赖</h2>
+    <ul>
+      <li>Microsoft.Toolkit.Uwp.Notifications — Toast 通知交互（已在 csproj 中）</li>
+      <li>NAudio — 系统音量接口适配</li>
+      <li>System.Management — 通过 WMI 读取/写入屏幕亮度（硬件）</li>
+      <li>Windows SDK types (Windows.Media.Control / Windows.UI.Notifications.Management)</li>
+    </ul>
+
+    <h2>4. 核心模块与职责（文件）</h2>
+    <table>
+      <tr><th>文件/模块</th><th>职责</th></tr>
+      <tr><td>App.xaml / App.xaml.cs</td><td>应用入口，托盘图标、通知监听器初始化，面板生命周期管理</td></tr>
+      <tr><td>MainWindow(.xaml/.cs)</td><td>通知气泡（无焦点 topmost），消息队列、入/退场动画与自动隐藏</td></tr>
+      <tr><td>MessageSummaryWindow(.xaml/.cs)</td><td>显示未读通知列表，提供清除和唤醒来源应用</td></tr>
+      <tr><td>SettingWindow(.xaml/.cs + .SMTC.cs)</td><td>控制中心：音量/亮度滑块与 SMTC 媒体控制集成</td></tr>
+      <tr><td>SMTC.cs</td><td>封装 GlobalSystemMediaTransportControls API：会话管理、播放/暂停/切歌、获取媒体元数据</td></tr>
+      <tr><td>toast.cs / toastmessagestore.cs</td><td>系统通知监听、解析 ToastData，缓存未读消息并与系统通知中心同步</td></tr>
+      <tr><td>Audio.cs / SystemSettingManager.cs / brightness.cs</td><td>音量与亮度抽象与平台实现（NAudio + WMI + Gamma 模拟）</td></tr>
+      <tr><td>ThemeResources.xaml</td><td>共享样式、动画与矢量图形（分支已抽取）</td></tr>
+    </table>
+
+    <h2>5. 主要函数/方法（概要）</h2>
+    <p>按功能模块列出最重要的行为：</p>
+    <ul>
+      <li><strong>App.InitializeListenerAsync()</strong> — 创建 ToastNotificationListener 并启动轮询（DispatcherTimer）来定期调用 FetchLatestNotificationAsync()</li>
+      <li><strong>ToastNotificationListener.FetchLatestNotificationAsync()</strong> — 获取最新通知、去重、解析并通过事件推送到 App</li>
+      <li><strong>SMTCController.InitializeAsync()</strong> — 请求 GlobalSystemMediaTransportControlsSessionManager 并订阅 SessionsChanged</li>
+      <li><strong>SMTCController.TogglePlayPauseAsync()</strong> — 切换播放/暂停并触发 OnPlaybackStateChanged</li>
+      <li><strong>SettingWindow.TryUpdateMediaUI()</strong> — 异步获取媒体信息并在 UI 线程更新 SongTitle/SongArtist/PlayPauseIcon（非阻塞）</li>
+      <li><strong>MainWindow.AddMessage(string)</strong> — 解析通知文本、合并分组、显示入场动画并启动隐藏计时器</li>
+    </ul>
+
+    <h2>6. 设计/实现要点（工程级细节）</h2>
+    <ul>
+      <li>线程策略：所有直接与 UI 交互的更新使用 <code>Dispatcher.Invoke/BeginInvoke</code>；SMTC 操作通过 <code>Task.Run</code> 封装以避免 UI 线程死锁。</li>
+      <li>事件驱动：SMTCController 以事件 (OnPlaybackStateChanged/OnSessionChanged) 通知上游；App 使用 OnToastDetected 事件触发 UI 更新。</li>
+      <li>资源与样式：ThemeResources.xaml 提取了大部分样式/图标，但当前代码中部分窗体仍包含重复资源，建议统一到 Application.Resources。</li>
+      <li>平台依赖：UserNotificationListener 与 GlobalSystemMediaTransportControls 在部分 Windows 版本或权限设置下可能不可用；需处理权限不足或 API 不可用情形（当前实现多数为静默失败并记录日志）。</li>
+    </ul>
+
+    <h2>7. 已知问题与改进建议（优先级）</h2>
+    <ol>
+      <li><strong>高</strong>：把 ThemeResources.xaml 并入 Application.Resources，删除窗体内重复声明，防止资源键冲突与样式不一致。</li>
+      <li><strong>高</strong>：在 App.xaml 注册 PlayPause 转换器（<code>PlayPauseConverter</code>）或修改 TestRunner 不依赖全局资源。</li>
+      <li><strong>中</strong>：在 SMTCController 的 CurrentSession_MediaPropertiesChanged 中触发媒体信息的主动刷新（避免只有 PlaybackStateChanged 时遗漏元数据更新）。</li>
+      <li><strong>中</strong>：改用矢量图标（ThemeResources 中已有 Geometry）替代 emoji，提升 DPI 缩放一致性并简化转换器逻辑。</li>
+      <li><strong>中</strong>：增加更严格的错误与超时处理（SMTC 与 UserNotificationListener 的调用点），并记录结构化日志以便排查。</li>
+      <li><strong>低</strong>：将 TestRunner 修改为以项目引用形式引用 Notifier（更健壮），并提供 CI 下的 UI smoke test 脚本（需 Windows 机器）。</li>
+    </ol>
+
+    <h2>8. 调试与本地测试指南</h2>
+    <ul>
+      <li>确保 Windows 通知权限已授予：Settings → Privacy → Notifications → 允许应用访问通知。</li>
+      <li>用 Visual Studio 以 Administrator 身份运行以便测试 WMI 亮度控制与系统级 API。</li>
+      <li>运行 TestRunner：它会在运行时反射加载 Notifier.dll 并打开 SettingWindow 做交互性 smoke 测试；确保 <code>Notifier.dll</code> 位于 TestRunner.exe 查找路径下（见 TestRunner 工程文件）。</li>
+      <li>若 SMTC 行为异常，先使用提供的 <code>SMTCController.MonitorChanges()</code> 在单元/手工测试里观察回调和数据。</li>
+    </ul>
+
+    <h2>9. 发布与打包建议</h2>
+    <ul>
+      <li>推荐用 <code>dotnet publish -c Release -r win-x64</code> 输出并生成 MSIX/Installer（例如 WiX 或 Inno Setup）以注册 AUMID、安装托盘快捷方式与开机自启。</li>
+      <li>如需单文件分发，慎用单文件打包以免影响 COM/WinRT 运行时类型查找；建议保留依赖文件目录结构或测试 thoroughly。</li>
+      <li>签名可执行并设置合适的执行权限。对使用 Windows API 的部分，记录所需最小 OS 版本并在安装向导中展示兼容性信息。</li>
+    </ul>
+
+    <h2>10. 常见故障 & 快速排查</h2>
+    <div class="note">无法接收通知：检查通知权限、并在日志/控制台查看 ToastNotificationListener.InitializeAsync 返回的 Message。</div>
+    <div class="note">SMTC 无响应：确认目标播放器支持系统 SMTC；尝试重启目标播放器并使用 SMTCController.WaitForSessionAsync() 验证会话可探测性。</div>
+    <div class="danger">亮度写入失败：WMI 对某些外接/虚拟显示器不支持硬件亮度写入，Fallback 为 Gamma 模拟（SetDeviceGammaRamp）。</div>
+
+    <h2>11. 下一步可交付项（可直行动作）</h2>
+    <ul>
+      <li>把 ThemeResources 合并到 App.xaml 并删除窗体重复资源（自动化一次性变更）。</li>
+      <li>在 App.xaml 注册 PlayPause 转换器并更新 TestRunner，使其不依赖硬编码资源名。</li>
+      <li>在 SMTCController 的 MediaPropertiesChanged 中新增触发回调，保证媒体元数据及时刷新。</li>
+      <li>为关键流程（通知监听、SMTC 初始化）添加结构化日志并在 CI 测试脚本里捕获。</li>
+    </ul>
+
+    <footer style="margin-top:18px;font-size:13px;color:#5b6570">Generated: 工程级概览 — 文件路径： <code>G:\info.html</code>. 如需把该文档并入仓库 README 或生成 PDF，请告知导出格式。</footer>
+  </div>
+</body>
+</html>
